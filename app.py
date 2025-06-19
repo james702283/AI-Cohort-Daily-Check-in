@@ -21,9 +21,11 @@ from io import BytesIO
 # Initialize the Flask application
 app = Flask(__name__)
 # IMPORTANT: A secret key is required for session management (the login feature).
-app.secret_key = 'super-secret-key-for-development-only'
+# In a real production app, this should be a long, random, and secret string.
+app.secret_key = 'a-super-secret-key-for-development-only'
 DATA_FILE = 'checkins.json'
 STATUS_FILE = 'status.json'
+# The password for the admin login is case-sensitive.
 ADMIN_PASSWORD = 'Instructor'
 
 # --- Data Persistence Functions ---
@@ -33,6 +35,9 @@ def load_data(file_path, default_data):
         return default_data
     try:
         with open(file_path, 'r') as f:
+            # Handle empty file case
+            if os.path.getsize(file_path) == 0:
+                return default_data
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return default_data
@@ -43,10 +48,12 @@ def save_data(file_path, data):
         json.dump(data, f, indent=4)
 
 # --- HTML Templates ---
+# Templates are defined as multi-line strings for a single-file application.
+# Includes CSS for a modern look and feel across all pages.
 BASE_STYLE = """
     <style>
         body { font-family: 'Inter', sans-serif; background-image: url('https://images.pexels.com/photos/1181359/pexels-photo-1181359.jpeg?auto=compress&cs=tinysrgb&w=1260&h=750&dpr=2'); background-size: cover; background-position: center; background-attachment: fixed; }
-        .card { background-color: rgba(17, 24, 39, 0.85); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border-radius: 16px; box-shadow: 0 20px 40px rgba(0,0,0,0.3); overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.1); }
+        .card { background-color: rgba(17, 24, 39, 0.9); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border-radius: 16px; box-shadow: 0 20px 40px rgba(0,0,0,0.3); overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.1); }
         .modern-header { background-color: rgba(26, 188, 156, 0.1); border-bottom: 1px solid rgba(26, 188, 156, 0.3); color: #ecf0f1; }
         .modern-btn { background-color: #1abc9c; color: white; transition: all 0.3s ease; }
         .modern-btn:hover { background-color: #16a085; transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
@@ -66,7 +73,7 @@ LOGIN_TEMPLATE = """
 <body class="flex items-center justify-center min-h-screen p-4">
     <div class="w-full max-w-md mx-auto"><div class="card">
         <div class="modern-header text-center p-6"><h1 class="text-3xl font-bold">Admin Login</h1></div>
-        <form method="post" class="p-8 space-y-6 dark-theme-text">
+        <form method="post" action="/login" class="p-8 space-y-6 dark-theme-text">
             <div><label for="password" class="block text-lg font-semibold mb-2">Password:</label><input type="password" id="password" name="password" class="dark-input w-full px-4 py-3 rounded-lg transition" required></div>
             {% if error %}<p class="text-red-400 text-center">{{ error }}</p>{% endif %}
             <button type="submit" class="modern-btn w-full font-bold py-3 px-6 rounded-lg text-lg">Login</button>
@@ -111,7 +118,7 @@ USER_TEMPLATE = """
     <script>
         const responses = {
             morale: { 1: ["A 1/10 is tough. 'A smooth sea never made a skilled sailor.' Remember that.", "Okay, a 1. Thanks for being honest. Let's find time to talk.", "Seeing a 1 is a sign to be kind to yourself. 'This too shall pass.'", "Got it, a 1. 'The oak fought the wind and was broken, the willow bent...' Let's be the willow.", "A 1 is just a starting point for a comeback. 'Fall seven times, stand up eight.'", "That's a heavy number. Remember you have power over your mind, not outside events.", "Acknowledging a 1 takes strength. Remember that strength.", "A 1 means it's time to regroup. We're a team, let's do it together.", "Okay, a 1. Deep breaths. One step at a time today.", "Thanks for sharing that 1. Your honesty is valued here."], 2: ["A 2 is a challenge. 'Every strike brings me closer to the next home run.' - Babe Ruth.", "Okay, a 2. 'Tough times never last, but tough people do.' You're tough.", "Seeing a 2. Remember, even the smallest step forward is still progress.", "Got it, a 2. Let's focus on one good thing today, however small.", "A 2 today. Tomorrow is a new day with no mistakes in it yet.", "That's a 2. It's okay to not be okay. Thanks for letting us know.", "A 2 is noted. Remember that asking for help is a sign of strength.", "Okay, a 2. Let's just focus on getting through the day. That's a win.", "A 2 can feel isolating. You're not alone in this.", "Thanks for the 2. We appreciate your vulnerability."], 3: ["A 3 is a sign you're pushing through. 'It does not matter how slowly you go...' - Confucius", "Got it, a 3. You're here, and that's what matters. Keep going.", "A 3 is tough but you're in the game. That's huge.", "Okay, a 3. Let's see if we can turn that into a 4 by day's end.", "A 3. 'Our greatest glory is not in never falling, but in rising every time we fall.'", "Thanks for the 3. You're facing the day, and that's commendable.", "A 3. Remember that progress isn't always linear. It's okay.", "A 3 is a signal. Let's be mindful and supportive today.", "Okay, a 3. Let's find a small victory to build on.", "I see the 3. Keep your head up. We believe in you."], 4: ["A 4. You're on the board. 'The secret of getting ahead is getting started.' - Mark Twain.", "Okay, a 4. 'Believe you can and you're halfway there.'", "A 4 is a foundation. Let's build on it today.", "Got it, a 4. It's not a 10, but it's not a 1 either. It's progress.", "A 4. Let's focus on what we can control and make it a good day.", "Thanks for the 4. We're in this together, let's move that number up.", "A 4 is a good starting point. 'The journey of a thousand miles begins with a single step.'", "Okay, a 4. Let's stay curious and see what the day brings.", "I see that 4. Let's aim for a little better, one hour at a time.", "A 4. It's an honest number. Let's work with it."], 5: ["A 5. Perfectly balanced. 'I am not a product of my circumstances. I am a product of my decisions.'", "Okay, a 5. Right in the middle. A solid place to be.", "A 5. 'Do the best you can until you know better. Then when you know better, do better.'", "Got it, a 5. It's a 'just keep swimming' kind of day. We can do that.", "A 5. Not bad, not great, just right for a day of steady work.", "Thanks for the 5. It's an important signal. Let's keep things steady.", "A 5. Let's see what we can do to nudge that in the right direction.", "Okay, a 5. A day of potential. Let's make the most of it.", "A 5. You're holding steady. That's a skill in itself.", "I see the 5. You're showing up and you're ready. That's a win."], 6: ["A 6. We're leaning positive! 'Perseverance is not a long race; it is many short races.'", "Okay, a 6. A good, solid number. Let's build on that energy.", "A 6. That's a sign of good things to come. Let's make it happen.", "Got it, a 6. More than halfway to a 10! Let's ride that wave.", "A 6 is a good place to be. 'Continuous improvement is better than delayed perfection.'", "Thanks for the 6. It's good to see that positive momentum.", "A 6. Let's channel that into some great work today.", "Okay, a 6. Let's keep that good energy flowing.", "A 6. You're on the right track. Keep it up!", "I see the 6. That's a solid score. Let's have a productive day."], 7: ["A 7 is a strong score! 'Act as if what you do makes a difference. It does.' - William James", "A solid 7. You've got good energy today. Let's use it well.", "A 7. That's a great sign for a productive and positive day.", "Got it, a 7. You're clearly in a good headspace. Let's get to it.", "A 7. 'The secret of getting ahead is getting started.' You're already ahead!", "Thanks for the 7. That positive energy is contagious.", "A 7 is great. Let's see if we can make it an 8 or 9.", "Okay, a 7. You're ready to tackle the day. Love to see it.", "A 7. You're bringing the good stuff today. Thank you.", "I see the 7. That's fantastic. Let's have a great session."], 8: ["An 8! Love to see it. 'Energy and persistence conquer all things.' - B. Franklin.", "A great 8! You're clearly feeling it today. Let's make big things happen.", "An 8. That's awesome. Let's channel that into some creative work.", "Got it, an 8. You're in the zone. Let's stay there.", "An 8 is fantastic. 'Passion is energy. Feel the power that comes from what excites you.'", "Thanks for the 8. Your positive attitude lifts the whole team.", "An 8. That's how we do it. Let's crush it today.", "Okay, an 8. You're ready to go. Let's make today count.", "An 8! That's what I'm talking about. Let's get after it.", "I see the 8. You're bringing your A-game. Let's go!"], 9: ["A 9! Almost perfect. 'The best way to predict the future is to create it.' - Peter Drucker.", "A 9. You are on fire today! Let's do something amazing.", "A 9. That's incredible. Let's use that momentum to help others.", "Got it, a 9. You're clearly at the top of your game. Inspiring!", "A 9 is phenomenal. 'You are the designer of your destiny.' And today looks like a masterpiece.", "Thanks for the 9. That's a huge boost for everyone.", "A 9. Let's bottle up that feeling. It's a great day to learn.", "Okay, a 9. You're seeing things clearly and feeling great. A perfect combo.", "A 9! Let's take on the biggest challenge we can find today.", "I see the 9. That's outstanding. Let's make some magic happen."], 10: ["A perfect 10! 'Stay hungry, stay foolish.' - Steve Jobs. Let's do something great.", "A 10! You're a firework today. Let's light up the sky.", "A 10. That's what we love to see. You're an inspiration.", "Got it, a 10. You're unstoppable. What's our biggest goal today?", "A 10 is as good as it gets. 'The only way to do great work is to love what you do.'", "Thanks for the 10. That's the gold standard. Let's lead by example.", "A 10! You've got it all today. Let's share that energy.", "Okay, a 10. You're 100% ready. Let's do this.", "A 10! That's incredible. You're going to have a fantastic day.", "I see the 10. Perfect score. Let's make today perfect too."]},
-            understanding: { 1: ["An understanding of 1. 'The expert in anything was once a beginner.' This is your beginning.", "1 on understanding. 'A person who never made a mistake never tried anything new.' Let's try.", "A 1 is just a question mark. Let's turn it into a period.", "Okay, a 1. 'I have not failed. I've just found one way that won't work.' Let's find another.", "A 1 means we have a great opportunity to learn. Let's seize it.", "Got it, a 1. 'Confusion is the first step toward clarity.' Let's get clear.", "A 1. Don't be afraid to ask questions. That's how we get to 10.", "Okay, a 1. Today is about finding the first step. We can do that.", "A 1 on understanding. Let's break it down to its simplest parts.", "Thanks for the 1. That honesty is the first step to true learning."], 2: ["An understanding of 2. 'The only source of knowledge is experience.' Let's get some experience.", "A 2. 'Struggle is the food from which change is made.' Let's get cooking.", "Okay, a 2. Let's find one small piece of this puzzle that makes sense and build from there.", "A 2. 'The master has failed more times than the beginner has even tried.' Keep trying.", "Got it, a 2. This is where the real learning happens. In the struggle.", "A 2. It's okay to feel lost. That's how you find a new path.", "Okay, a 2. Let's partner up and tackle this from a different angle.", "A 2. Every question you ask makes the whole team smarter.", "An understanding of 2. Let's focus on 'what' before we get to 'why.'", "I see the 2. Let's find the one thing you DO understand and anchor to that."], 3: ["A 3 on understanding. 'There are no shortcuts to any place worth going.' This is worth it.", "Okay, a 3. We're moving from 'what?' to 'wait, I think I see...'. That's progress.", "A 3. 'The first step towards getting somewhere is to decide you're not going to stay where you are.'", "Got it, a 3. Let's solidify this foundation before we build higher.", "A 3. You're grappling with it, and that's exactly what learning feels like.", "An understanding of 3. Let's review the fundamentals one more time.", "A 3. This is where persistence pays off. Let's persist.", "Okay, a 3. Let's try explaining it a different way. How about an analogy?", "A 3. Let's not worry about speed. Let's worry about direction. We're pointed right.", "I see the 3. You're in the game. Let's keep working."], 4: ["An understanding of 4. 'You don't learn to walk by following rules. You learn by doing.'", "A 4. The fog is starting to lift. We can see the road ahead.", "Okay, a 4. You're starting to connect the dots. That's a great feeling.", "A 4. 'The capacity to learn is a gift... the willingness to learn is a choice.' You've made the choice.", "Got it, a 4. Let's turn those 'I think's into 'I know's.", "A 4. This is the tipping point. Let's tip it in the right direction.", "An understanding of 4. You're asking the right questions now. That's key.", "A 4. Let's find one more piece to click into place.", "Okay, a 4. You're building a good base. Let's make it rock solid.", "I see the 4. This is where the hard work starts to show. Keep it up."], 5: ["A 5 on understanding. Perfectly in the middle. You're building a bridge from confusion to clarity.", "A 5. 'I am still learning.' - Michelangelo. And so are we all.", "Okay, a 5. You've got the core concepts. Now let's work on the details.", "A 5. You're halfway there. Let's focus on the second half of the journey.", "Got it, a 5. You can explain the 'what', now let's master the 'how' and 'why'.", "A 5. This is a great score. It shows you know what you don't know, which is wisdom.", "An understanding of 5. Let's practice it. Repetition is the mother of skill.", "A 5. You're holding your own. That's a great place to be.", "Okay, a 5. Let's challenge one of your assumptions about this topic.", "I see the 5. It's a solid, honest score. Let's build from here."], 6: ["A 6 on understanding. You're getting it. 'Tell me and I forget. Teach me and I remember. Involve me and I learn.'", "A 6. You can see the big picture now. The details are coming into focus.", "Okay, a 6. You're starting to teach yourself now, and that's the goal.", "A 6. You're more right than wrong. That's a winning ratio.", "Got it, a 6. Let's talk about the edge cases, the tricky parts.", "A 6. You're building confidence. Let's reinforce it with practice.", "An understanding of 6. You can probably explain this to someone else, which is a great test.", "A 6. The hard part is over. Now it's about refinement.", "Okay, a 6. You're in a strong position. Let's solidify it.", "I see the 6. That's a score to be proud of. Nice work."], 7: ["A 7 on understanding. That's great. 'The beautiful thing about learning is that nobody can take it away from you.'", "A 7. You've got a solid grasp on this. You're ready for the next level.", "Okay, a 7. You're thinking about the 'why' behind the 'what'. That's deep learning.", "A 7. 'Change is the end result of all true learning.' You've changed your mind today.", "Got it, a 7. You're asking insightful questions now. That's a sign of mastery.", "A 7. You're not just following the recipe, you're starting to experiment.", "An understanding of 7. You're reliable on this topic. We can count on you.", "A 7. You're moving from learner to practitioner. It's a great step.", "Okay, a 7. Let's see how this concept connects to what we learned last week.", "I see the 7. That's a very strong score. Excellent job."], 8: ["An 8 on understanding. That's fantastic. 'An investment in knowledge pays the best interest.'", "An 8. You're not just doing it, you're understanding it. That's the key.", "Okay, an 8. You could probably teach this to someone else right now.", "An 8. 'Knowledge is power.' And you're getting powerful.", "Got it, an 8. You've clearly put in the work. It shows.", "An 8. This is where learning becomes fun, because you're in control.", "An understanding of 8. You're seeing the matrix. You get the underlying principles.", "An 8. That's a score that builds huge confidence. Well-deserved.", "Okay, an 8. You've mastered the core. Let's explore the advanced topics.", "I see the 8. That's tremendous. Be proud of that work."], 9: ["A 9 on understanding. That's mastery. 'Live as if you were to die tomorrow. Learn as if you were to live forever.'", "A 9. You've gone beyond the lesson and are making it your own. Bravo.", "Okay, a 9. You're seeing connections that weren't even in the material. That's insight.", "A 9. You're not just a student of this, you're becoming a scholar.", "Got it, a 9. You've internalized this. It's part of your toolkit now.", "A 9. That is truly impressive. Your hard work has paid off in a big way.", "An understanding of 9. What's the next thing you want to learn? You're ready.", "A 9. You're one of the go-to people on this topic now. Own it.", "Okay, a 9. Let's think about how you can apply this knowledge in a new, creative way.", "I see the 9. That's outstanding. A truly excellent result."], 10: ["A perfect 10 on understanding! 'The future belongs to those who learn more skills and combine them in creative ways.'", "A 10. You know this inside and out. You're ready to write the next chapter.", "A 10. Perfect score. You didn't just learn it, you absorbed it.", "Got it, a 10. You've reached the top of this mountain. What's the next one?", "A 10. You are a resource for the entire team on this. Thank you.", "A 10. That's a testament to your focus and dedication. Incredible.", "A perfect 10. You've achieved complete clarity. That's a beautiful thing.", "A 10. You've not only learned, you've understood. There's a difference.", "Okay, a 10. You've earned a victory lap on this one. Well done.", "I see the 10. That's a perfect score from a perfect student. Thank you."]}
+            understanding: { 1: ["An understanding of 1. 'The expert in anything was once a beginner.' This is your beginning.", "1 on understanding. 'A person who never made a mistake never tried anything new.' Let's try.", "A 1 is just a question mark. Let's turn it into a period.", "Okay, a 1. 'I have not failed. I've just found one way that won't work.' Let's find another.", "A 1 means we have a great opportunity to learn. Let's seize it.", "Got it, a 1. 'Confusion is the first step toward clarity.' Let's get clear.", "A 1. Don't be afraid to ask questions. That's how we get to 10.", "Okay, a 1. Today is about finding the first step. We can do that.", "A 1 on understanding. Let's break it down to its simplest parts.", "Thanks for the 1. That honesty is the first step to true learning."], 2: ["An understanding of 2. 'The only source of knowledge is experience.' Let's get some experience.", "A 2. 'Struggle is the food from which change is made.' Let's get cooking.", "Okay, a 2. Let's find one small piece of this puzzle that makes sense and build from there.", "A 2. 'The master has failed more times than the beginner has even tried.' Keep trying.", "Got it, a 2. This is where the real learning happens. In the struggle.", "A 2. It's okay to feel lost. That's how you find a new path.", "Okay, a 2. Let's partner up and tackle this from a different angle.", "A 2. Every question you ask makes the whole team smarter.", "An understanding of 2. Let's focus on 'what' before we get to 'why.'", "I see the 2. Let's find the one thing you DO understand and anchor to that."], 3: ["A 3 on understanding. 'There are no shortcuts to any place worth going.' This is worth it.", "Okay, a 3. We're moving from 'what?' to 'wait, I think I see...'. That's progress.", "A 3. 'The first step towards getting somewhere is to decide you’re not going to stay where you are.'", "Got it, a 3. Let's solidify this foundation before we build higher.", "A 3. You're grappling with it, and that's exactly what learning feels like.", "An understanding of 3. Let's review the fundamentals one more time.", "A 3. This is where persistence pays off. Let's persist.", "Okay, a 3. Let's try explaining it a different way. How about an analogy?", "A 3. Let's not worry about speed. Let's worry about direction. We're pointed right.", "I see the 3. You're in the game. Let's keep working."], 4: ["An understanding of 4. 'You don’t learn to walk by following rules. You learn by doing.'", "A 4. The fog is starting to lift. We can see the road ahead.", "Okay, a 4. You're starting to connect the dots. That's a great feeling.", "A 4. 'The capacity to learn is a gift... the willingness to learn is a choice.' You've made the choice.", "Got it, a 4. Let's turn those 'I think's into 'I know's.", "A 4. This is the tipping point. Let's tip it in the right direction.", "An understanding of 4. You're asking the right questions now. That's key.", "A 4. Let's find one more piece to click into place.", "Okay, a 4. You're building a good base. Let's make it rock solid.", "I see the 4. This is where the hard work starts to show. Keep it up."], 5: ["A 5 on understanding. Perfectly in the middle. You're building a bridge from confusion to clarity.", "A 5. 'I am still learning.' - Michelangelo. And so are we all.", "Okay, a 5. You've got the core concepts. Now let's work on the details.", "A 5. You're halfway there. Let's focus on the second half of the journey.", "Got it, a 5. You can explain the 'what', now let's master the 'how' and 'why'.", "A 5. This is a great score. It shows you know what you don't know, which is wisdom.", "An understanding of 5. Let's practice it. Repetition is the mother of skill.", "A 5. You're holding your own. That's a great place to be.", "Okay, a 5. Let's challenge one of your assumptions about this topic.", "I see the 5. It's a solid, honest score. Let's build from here."], 6: ["A 6 on understanding. You're getting it. 'Tell me and I forget. Teach me and I remember. Involve me and I learn.'", "A 6. You can see the big picture now. The details are coming into focus.", "Okay, a 6. You're starting to teach yourself now, and that's the goal.", "A 6. You're more right than wrong. That's a winning ratio.", "Got it, a 6. Let's talk about the edge cases, the tricky parts.", "A 6. You're building confidence. Let's reinforce it with practice.", "An understanding of 6. You can probably explain this to someone else, which is a great test.", "A 6. The hard part is over. Now it's about refinement.", "Okay, a 6. You're in a strong position. Let's solidify it.", "I see the 6. That's a score to be proud of. Nice work."], 7: ["A 7 on understanding. That's great. 'The beautiful thing about learning is that nobody can take it away from you.'", "A 7. You've got a solid grasp on this. You're ready for the next level.", "Okay, a 7. You're thinking about the 'why' behind the 'what'. That's deep learning.", "A 7. 'Change is the end result of all true learning.' You've changed your mind today.", "Got it, a 7. You're asking insightful questions now. That's a sign of mastery.", "A 7. You're not just following the recipe, you're starting to experiment.", "An understanding of 7. You're reliable on this topic. We can count on you.", "A 7. You're moving from learner to practitioner. It's a great step.", "Okay, a 7. Let's see how this concept connects to what we learned last week.", "I see the 7. That's a very strong score. Excellent job."], 8: ["An 8 on understanding. That's fantastic. 'An investment in knowledge pays the best interest.'", "An 8. You're not just doing it, you're understanding it. That's the key.", "Okay, an 8. You could probably teach this to someone else right now.", "An 8. 'Knowledge is power.' And you're getting powerful.", "Got it, an 8. You've clearly put in the work. It shows.", "An 8. This is where learning becomes fun, because you're in control.", "An understanding of 8. You're seeing the matrix. You get the underlying principles.", "An 8. That's a score that builds huge confidence. Well-deserved.", "Okay, an 8. You've mastered the core. Let's explore the advanced topics.", "I see the 8. That's tremendous. Be proud of that work."], 9: ["A 9 on understanding. That's mastery. 'Live as if you were to die tomorrow. Learn as if you were to live forever.'", "A 9. You've gone beyond the lesson and are making it your own. Bravo.", "Okay, a 9. You're seeing connections that weren't even in the material. That's insight.", "A 9. You're not just a student of this, you're becoming a scholar.", "Got it, a 9. You've internalized this. It's part of your toolkit now.", "A 9. That is truly impressive. Your hard work has paid off in a big way.", "An understanding of 9. What's the next thing you want to learn? You're ready.", "A 9. You're one of the go-to people on this topic now. Own it.", "Okay, a 9. Let's think about how you can apply this knowledge in a new, creative way.", "I see the 9. That's outstanding. A truly excellent result."], 10: ["A perfect 10 on understanding! 'The future belongs to those who learn more skills and combine them in creative ways.'", "A 10. You know this inside and out. You're ready to write the next chapter.", "A 10. Perfect score. You didn't just learn it, you absorbed it.", "Got it, a 10. You've reached the top of this mountain. What's the next one?", "A 10. You are a resource for the entire team on this. Thank you.", "A 10. That's a testament to your focus and dedication. Incredible.", "A perfect 10. You've achieved complete clarity. That's a beautiful thing.", "A 10. You've not only learned, you've understood. There's a difference.", "Okay, a 10. You've earned a victory lap on this one. Well done.", "I see the 10. That's a perfect score from a perfect student. Thank you."]}
         };
         const rosterList = document.getElementById('rosterList');
         const emptyRoster = document.getElementById('emptyRoster');
@@ -132,35 +139,35 @@ USER_TEMPLATE = """
             }
         }
         
-        document.addEventListener('DOMContentLoaded', () => {
-            fetch('/api/today').then(res => res.json()).then(data => updateRoster(data));
-        });
+        document.addEventListener('DOMContentLoaded', () => { fetch('/api/today').then(res => res.json()).then(data => updateRoster(data)); });
 
-        document.getElementById('checkInBtn').addEventListener('click', () => {
-            const name = document.getElementById('name').value.trim();
-            const morale = parseInt(document.getElementById('morale').value);
-            const understanding = parseInt(document.getElementById('understanding').value);
-            const errorMessage = document.getElementById('errorMessage');
+        if (document.getElementById('checkInBtn')) {
+            document.getElementById('checkInBtn').addEventListener('click', () => {
+                const name = document.getElementById('name').value.trim();
+                const morale = parseInt(document.getElementById('morale').value);
+                const understanding = parseInt(document.getElementById('understanding').value);
+                const errorMessage = document.getElementById('errorMessage');
 
-            if (!name || !morale || !understanding) { errorMessage.textContent = "C'mon now, gotta fill out all the fields."; return; }
-            if (morale < 1 || morale > 10 || understanding < 1 || understanding > 10) { errorMessage.textContent = "Whoa there. Those scores need to be between 1 and 10."; return; }
-            
-            errorMessage.textContent = '';
-            
-            fetch('/api/checkin', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ name, morale, understanding })
-            }).then(res => res.json()).then(data => {
-                if(data.success) {
-                    displayFeedback(morale, understanding);
-                    fetch('/api/today').then(res => res.json()).then(data => updateRoster(data));
-                    clearInputs();
-                } else {
-                    errorMessage.textContent = data.error || "An unknown error occurred.";
-                }
+                if (!name || !morale || !understanding) { errorMessage.textContent = "C'mon now, gotta fill out all the fields."; return; }
+                if (morale < 1 || morale > 10 || understanding < 1 || understanding > 10) { errorMessage.textContent = "Whoa there. Those scores need to be between 1 and 10."; return; }
+                
+                errorMessage.textContent = '';
+                
+                fetch('/api/checkin', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ name, morale, understanding })
+                }).then(res => res.json()).then(data => {
+                    if(data.success) {
+                        displayFeedback(morale, understanding);
+                        fetch('/api/today').then(res => res.json()).then(data => updateRoster(data));
+                        clearInputs();
+                    } else {
+                        errorMessage.textContent = data.error || "An unknown error occurred.";
+                    }
+                });
             });
-        });
+        }
 
         function displayFeedback(morale_score, understanding_score) {
             const feedbackMessage = document.getElementById('feedbackMessage');
@@ -199,7 +206,8 @@ ADMIN_TEMPLATE = """
         .tab-content.active { display: block; }
         .stat-card { background-color: #1f2937; border-radius: 12px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1); }
         .day-header { background-color: #374151; }
-        details > summary { cursor: pointer; }
+        details > summary { cursor: pointer; list-style: none; } /* Hide default arrow */
+        details > summary::-webkit-details-marker { display: none; } /* Hide default arrow for Chrome/Safari */
     </style>
 </head>
 <body class="p-4 md:p-8 bg-gray-900 text-gray-300">
@@ -210,7 +218,6 @@ ADMIN_TEMPLATE = """
                 <p class="text-lg text-gray-400 mt-2">Historical Check-in Analysis</p>
             </div>
             <div class="flex items-center gap-4">
-                 <!-- Session Control -->
                 <div class="text-right">
                     <p class="text-white font-semibold">Session Status: 
                         {% if is_open %} <span class="text-green-400">OPEN</span>
@@ -225,15 +232,13 @@ ADMIN_TEMPLATE = """
                 <a href="/logout" class="bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-lg">Logout</a>
             </div>
         </header>
-        <!-- Tabs -->
         <div class="flex border-b border-gray-700 mb-8">
             <div class="tab active" onclick="openTab(event, 'summary')">Daily Summary</div>
             <div class="tab" onclick="openTab(event, 'calendar')">Calendar Log</div>
             <div class="tab" onclick="openTab(event, 'students')">Student Analysis</div>
         </div>
-        <!-- Tab Content -->
         <div id="summary" class="tab-content active">
-            {% for date, data in daily_data.items()|sort(reverse=True) %}
+            {% for date, data in daily_data.items() %}
             <section class="mb-8 stat-card">
                 <div class="day-header p-4 rounded-t-lg"><h2 class="text-2xl font-bold text-white">{{ data.friendly_date }}</h2></div>
                 <div class="p-6 grid grid-cols-1 sm:grid-cols-3 gap-6 text-center">
@@ -246,8 +251,8 @@ ADMIN_TEMPLATE = """
         </div>
         <div id="calendar" class="tab-content">
              <div class="stat-card p-6"><h2 class="text-2xl font-bold text-white mb-4">Calendar Log</h2><div class="space-y-4">
-                    {% for date, data in daily_data.items()|sort(reverse=True) %}
-                        <details class="bg-gray-800 rounded-lg"><summary class="p-4 text-lg font-semibold text-white">{{ data.friendly_date }} ({{ data.checkins|length }} check-ins) - Morale: {{ '%.2f'|format(data.avg_morale) }}, Understanding: {{ '%.2f'|format(data.avg_understanding) }}</summary>
+                    {% for date, data in daily_data.items() %}
+                        <details class="bg-gray-800 rounded-lg"><summary class="p-4 text-lg font-semibold text-white flex justify-between items-center"><span>{{ data.friendly_date }} ({{ data.checkins|length }} check-ins) - Morale: {{ '%.2f'|format(data.avg_morale) }}, U: {{ '%.2f'|format(data.avg_understanding) }}</span><span>&#9662;</span></summary>
                             <div class="p-6 border-t border-gray-600 space-y-3">
                                 {% for checkin in data.checkins %}<div class="roster-item p-3 rounded-lg flex justify-between"><p class="font-bold text-lg text-gray-100">{{ checkin.name }} <span class="text-xs text-gray-400 ml-2">{{ checkin.time }}</span></p><p class="text-sm text-gray-200">M: <span class="font-semibold text-white">{{ checkin.morale }}/10</span> | U: <span class="font-semibold text-white">{{ checkin.understanding }}/10</span></p></div>{% endfor %}
                             </div></details>
@@ -257,8 +262,8 @@ ADMIN_TEMPLATE = """
         <div id="students" class="tab-content">
             <div class="stat-card p-6"><div class="flex justify-between items-center mb-6"><h2 class="text-2xl font-bold text-white">Per-Student History</h2><a href="/export" class="modern-btn font-bold py-2 px-4 rounded-lg text-lg">Export to Excel</a></div>
                 <div class="space-y-4">
-                     {% for name, data in student_data.items()|sort %}
-                        <details class="bg-gray-800 rounded-lg"><summary class="p-4 text-lg font-semibold text-white">{{ name }} ({{ data.checkins|length }} check-ins)</summary>
+                     {% for name, data in student_data.items() %}
+                        <details class="bg-gray-800 rounded-lg"><summary class="p-4 text-lg font-semibold text-white flex justify-between items-center"><span>{{ name }} ({{ data.checkins|length }} check-ins)</span><span>&#9662;</span></summary>
                              <div class="p-6 border-t border-gray-600 space-y-3">
                                 {% for checkin in data.checkins %}<div class="roster-item p-3 rounded-lg flex justify-between"><p class="font-bold text-lg text-gray-100">{{ checkin.date_friendly }} <span class="text-xs text-gray-400 ml-2">{{ checkin.time }}</span></p><p class="text-sm text-gray-200">Morale: <span class="font-semibold text-white">{{ checkin.morale }}/10</span> | Understanding: <span class="font-semibold text-white">{{ checkin.understanding }}/10</span></p></div>{% endfor %}
                             </div></details>
@@ -313,6 +318,7 @@ def admin_view():
     all_checkins = load_data(DATA_FILE, [])
     status = load_data(STATUS_FILE, {'is_open': False})
     
+    # --- Process data for Daily Summary and Calendar Log ---
     daily_data = defaultdict(lambda: {'checkins': [], 'total_morale': 0, 'total_understanding': 0})
     for checkin in all_checkins:
         dt_obj = datetime.fromisoformat(checkin['timestamp'])
@@ -332,6 +338,7 @@ def admin_view():
             'friendly_date': datetime.strptime(date_key, '%Y-%m-%d').strftime('%A, %B %d, %Y')
         }
         
+    # --- Process data for Student Analysis ---
     student_data = defaultdict(lambda: {'checkins': []})
     for checkin in sorted(all_checkins, key=lambda x: x['timestamp'], reverse=True):
         dt_obj = datetime.fromisoformat(checkin['timestamp'])
@@ -339,7 +346,10 @@ def admin_view():
         checkin['time'] = dt_obj.strftime('%I:%M:%S %p')
         student_data[checkin['name']]['checkins'].append(checkin)
         
-    return render_template_string(ADMIN_TEMPLATE, style=BASE_STYLE, daily_data=processed_daily_data, student_data=student_data, is_open=status.get('is_open', False))
+    # Sort students alphabetically by name
+    sorted_student_data = dict(sorted(student_data.items()))
+
+    return render_template_string(ADMIN_TEMPLATE, style=BASE_STYLE, daily_data=processed_daily_data, student_data=sorted_student_data, is_open=status.get('is_open', False))
 
 @app.route('/start', methods=['POST'])
 def start_session():
@@ -365,7 +375,7 @@ def export_data():
     df['Date'] = df['timestamp'].dt.strftime('%Y-%m-%d')
     df['Time'] = df['timestamp'].dt.strftime('%I:%M:%S %p')
     df_export = df[['name', 'Date', 'Time', 'morale', 'understanding']]
-    df_export.columns = ['Name', 'Date', 'Time', 'Morale', 'Understanding'] # Clean up column headers
+    df_export.columns = ['Name', 'Date', 'Time', 'Morale', 'Understanding']
     
     output = BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -388,7 +398,7 @@ def handle_checkin():
         
     all_checkins = load_data(DATA_FILE, [])
     new_entry = {
-        'name': data['name'].strip(),
+        'name': data['name'].strip().title(), # Capitalize name for consistency
         'morale': data['morale'],
         'understanding': data['understanding'],
         'timestamp': datetime.now().isoformat()
@@ -407,8 +417,7 @@ def get_todays_checkins():
 
 
 if __name__ == '__main__':
-    # Initialize status file if it doesn't exist
+    # Initialize status file if it doesn't exist on first run
     if not os.path.exists(STATUS_FILE):
         save_data(STATUS_FILE, {'is_open': False})
     app.run(debug=True)
-
