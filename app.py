@@ -1,94 +1,113 @@
 ﻿# app.py
-# An enhanced check-in application with separate user and admin views,
-# and persistent data storage using a JSON file.
+# A comprehensive check-in and analysis tool with instructor-controlled sessions,
+# a login system, persistent JSON storage, and data export functionality.
 
 # To run this:
 # 1. Make sure you have Python installed.
-# 2. Install Flask by running: pip install Flask
+# 2. Install dependencies: pip install Flask pandas openpyxl
 # 3. Run this script from your terminal: python app.py
 # 4. Open your browser:
 #    - User View: http://127.0.0.1:5000/
-#    - Admin View: http://127.0.0.1:5000/admin
+#    - Admin Login: http://127.0.0.1:5000/login (Password: Instructor)
 
 import json
-from flask import Flask, render_template_string, jsonify, request
+import os
+from flask import Flask, render_template_string, jsonify, request, session, redirect, url_for, send_file
 from datetime import datetime
 from collections import defaultdict
+import pandas as pd
+from io import BytesIO
 
 # Initialize the Flask application
 app = Flask(__name__)
+# IMPORTANT: A secret key is required for session management (the login feature).
+app.secret_key = 'super-secret-key-for-development-only'
 DATA_FILE = 'checkins.json'
+STATUS_FILE = 'status.json'
+ADMIN_PASSWORD = 'Instructor'
 
 # --- Data Persistence Functions ---
-def load_checkins():
-    """Loads check-in data from the JSON file."""
+def load_data(file_path, default_data):
+    """A generic function to load data from a JSON file."""
+    if not os.path.exists(file_path):
+        return default_data
     try:
-        with open(DATA_FILE, 'r') as f:
+        with open(file_path, 'r') as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
-        # If the file doesn't exist or is empty, return an empty list.
-        return []
+        return default_data
 
-def save_checkins(data):
-    """Saves check-in data to the JSON file."""
-    with open(DATA_FILE, 'w') as f:
+def save_data(file_path, data):
+    """A generic function to save data to a JSON file."""
+    with open(file_path, 'w') as f:
         json.dump(data, f, indent=4)
 
 # --- HTML Templates ---
-# We define our HTML templates as multi-line strings.
-# This keeps the project as a single, easy-to-run file.
-
-# Template for the user-facing check-in page
-USER_TEMPLATE = """
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Cohort Check-in</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+BASE_STYLE = """
     <style>
         body { font-family: 'Inter', sans-serif; background-image: url('https://images.pexels.com/photos/1181359/pexels-photo-1181359.jpeg?auto=compress&cs=tinysrgb&w=1260&h=750&dpr=2'); background-size: cover; background-position: center; background-attachment: fixed; }
         .card { background-color: rgba(17, 24, 39, 0.85); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border-radius: 16px; box-shadow: 0 20px 40px rgba(0,0,0,0.3); overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.1); }
         .modern-header { background-color: rgba(26, 188, 156, 0.1); border-bottom: 1px solid rgba(26, 188, 156, 0.3); color: #ecf0f1; }
         .modern-btn { background-color: #1abc9c; color: white; transition: all 0.3s ease; }
         .modern-btn:hover { background-color: #16a085; transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
+        .danger-btn { background-color: #e74c3c; color: white; transition: all 0.3s ease; }
+        .danger-btn:hover { background-color: #c0392b; }
         .dark-input { background-color: rgba(0, 0, 0, 0.2); color: #ecf0f1; border: 1px solid rgba(255, 255, 255, 0.2); }
         .dark-input::placeholder { color: rgba(236, 240, 241, 0.5); }
         .dark-input:focus { box-shadow: 0 0 0 3px rgba(26, 188, 156, 0.4); background-color: rgba(0, 0, 0, 0.3); border-color: #1abc9c; }
-        .dark-theme-text label, .dark-theme-text h2 { color: #ecf0f1; }
+        .dark-theme-text label, .dark-theme-text h1, .dark-theme-text h2, .dark-theme-text p { color: #ecf0f1; }
         .roster-item { border-left: 4px solid #1abc9c; background-color: rgba(44, 62, 80, 0.5); }
     </style>
-</head>
+"""
+
+LOGIN_TEMPLATE = """
+<!DOCTYPE html><html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Admin Login</title><script src="https://cdn.tailwindcss.com"></script><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">{{ style|safe }}</head>
 <body class="flex items-center justify-center min-h-screen p-4">
-    <div class="w-full max-w-2xl mx-auto">
-        <div class="card">
-            <div class="modern-header text-center p-6">
-                <h1 class="text-3xl md:text-4xl font-bold">AI Cohort Daily Check-in</h1>
-                <p class="text-lg mt-2 opacity-90">Let's see where everyone's at. Be curious, not judgmental.</p>
-            </div>
+    <div class="w-full max-w-md mx-auto"><div class="card">
+        <div class="modern-header text-center p-6"><h1 class="text-3xl font-bold">Admin Login</h1></div>
+        <form method="post" class="p-8 space-y-6 dark-theme-text">
+            <div><label for="password" class="block text-lg font-semibold mb-2">Password:</label><input type="password" id="password" name="password" class="dark-input w-full px-4 py-3 rounded-lg transition" required></div>
+            {% if error %}<p class="text-red-400 text-center">{{ error }}</p>{% endif %}
+            <button type="submit" class="modern-btn w-full font-bold py-3 px-6 rounded-lg text-lg">Login</button>
+        </form>
+    </div></div>
+</body></html>
+"""
 
-            <div id="checkInForm" class="p-6 md:p-8 space-y-6 dark-theme-text">
-                <div><label for="name" class="block text-lg font-semibold mb-2">Who we got here? Tell me your name:</label><input type="text" id="name" class="dark-input w-full px-4 py-3 rounded-lg transition" placeholder="e.g., Alex Johnson"></div>
-                <div><label for="morale" class="block text-lg font-semibold mb-2">On a scale of 1 to 10, how you feelin' today?</label><input type="number" id="morale" min="1" max="10" class="dark-input w-full px-4 py-3 rounded-lg transition" placeholder="1 (Low battery) to 10 (Fully charged!)"></div>
-                <div><label for="understanding" class="block text-lg font-semibold mb-2">And 1 to 10, how's your understanding of the lessons?</label><input type="number" id="understanding" min="1" max="10" class="dark-input w-full px-4 py-3 rounded-lg transition" placeholder="1 (In the fog) to 10 (Crystal clear)"></div>
-                <div id="errorMessage" class="text-red-400 font-semibold text-center h-6"></div>
-                <div id="feedbackMessage" class="feedback-message text-center font-semibold p-4 rounded-lg h-24 flex items-center justify-center text-sm"></div>
-                <div class="flex flex-col sm:flex-row gap-4 pt-2">
-                    <button id="checkInBtn" class="modern-btn w-full font-bold py-3 px-6 rounded-lg text-lg">Check-In</button>
-                </div>
-            </div>
+USER_TEMPLATE = """
+<!DOCTYPE html><html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>AI Cohort Check-in</title><script src="https://cdn.tailwindcss.com"></script><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">{{ style|safe }}</head>
+<body class="flex items-center justify-center min-h-screen p-4">
+    <div class="w-full max-w-2xl mx-auto"><div class="card">
+        <div class="modern-header text-center p-6">
+            <h1 class="text-3xl md:text-4xl font-bold">AI Cohort Daily Check-in</h1>
+            <p class="text-lg mt-2 opacity-90">Let's see where everyone's at. Be curious, not judgmental.</p>
+        </div>
+        
+        {% if is_open %}
+        <div id="checkInForm" class="p-6 md:p-8 space-y-6 dark-theme-text">
+            <div><label for="name" class="block text-lg font-semibold mb-2">Who we got here? Tell me your name:</label><input type="text" id="name" class="dark-input w-full px-4 py-3 rounded-lg transition" placeholder="e.g., Alex Johnson"></div>
+            <div><label for="morale" class="block text-lg font-semibold mb-2">On a scale of 1 to 10, how you feelin' today?</label><input type="number" id="morale" min="1" max="10" class="dark-input w-full px-4 py-3 rounded-lg transition" placeholder="1 (Low battery) to 10 (Fully charged!)"></div>
+            <div><label for="understanding" class="block text-lg font-semibold mb-2">And 1 to 10, how's your understanding of the lessons?</label><input type="number" id="understanding" min="1" max="10" class="dark-input w-full px-4 py-3 rounded-lg transition" placeholder="1 (In the fog) to 10 (Crystal clear)"></div>
+            <div id="errorMessage" class="text-red-400 font-semibold text-center h-6"></div>
+            <div id="feedbackMessage" class="feedback-message text-center font-semibold p-4 rounded-lg h-24 flex items-center justify-center text-sm"></div>
+            <div class="flex flex-col sm:flex-row gap-4 pt-2"><button id="checkInBtn" class="modern-btn w-full font-bold py-3 px-6 rounded-lg text-lg">Check-In</button></div>
+        </div>
+        {% else %}
+        <div class="p-8 text-center dark-theme-text">
+            <h2 class="text-2xl font-bold">Check-in is Currently Closed</h2>
+            <p class="mt-4 text-gray-300">Please wait for the instructor to start the session.</p>
+        </div>
+        {% endif %}
 
-            <div class="dark-theme-text bg-black/20 p-6 md:p-8">
-                <h2 class="text-2xl font-bold border-b-2 border-gray-500/50 pb-2 mb-4">Today's Check-in Roster</h2>
-                <div id="rosterList" class="space-y-3">
-                    <p id="emptyRoster" class="text-gray-500">The classroom is quiet... for now.</p>
-                </div>
+        <div class="dark-theme-text bg-black/20 p-6 md:p-8">
+            <h2 class="text-2xl font-bold border-b-2 border-gray-500/50 pb-2 mb-4">Today's Check-in Roster</h2>
+            <div id="rosterList" class="space-y-3">
+                <p id="emptyRoster" class="text-gray-400">The classroom is quiet... for now.</p>
             </div>
         </div>
-    </div>
-
+    </div></div>
     <script>
         const responses = {
             morale: { 1: ["A 1/10 is tough. 'A smooth sea never made a skilled sailor.' Remember that.", "Okay, a 1. Thanks for being honest. Let's find time to talk.", "Seeing a 1 is a sign to be kind to yourself. 'This too shall pass.'", "Got it, a 1. 'The oak fought the wind and was broken, the willow bent...' Let's be the willow.", "A 1 is just a starting point for a comeback. 'Fall seven times, stand up eight.'", "That's a heavy number. Remember you have power over your mind, not outside events.", "Acknowledging a 1 takes strength. Remember that strength.", "A 1 means it's time to regroup. We're a team, let's do it together.", "Okay, a 1. Deep breaths. One step at a time today.", "Thanks for sharing that 1. Your honesty is valued here."], 2: ["A 2 is a challenge. 'Every strike brings me closer to the next home run.' - Babe Ruth.", "Okay, a 2. 'Tough times never last, but tough people do.' You're tough.", "Seeing a 2. Remember, even the smallest step forward is still progress.", "Got it, a 2. Let's focus on one good thing today, however small.", "A 2 today. Tomorrow is a new day with no mistakes in it yet.", "That's a 2. It's okay to not be okay. Thanks for letting us know.", "A 2 is noted. Remember that asking for help is a sign of strength.", "Okay, a 2. Let's just focus on getting through the day. That's a win.", "A 2 can feel isolating. You're not alone in this.", "Thanks for the 2. We appreciate your vulnerability."], 3: ["A 3 is a sign you're pushing through. 'It does not matter how slowly you go...' - Confucius", "Got it, a 3. You're here, and that's what matters. Keep going.", "A 3 is tough but you're in the game. That's huge.", "Okay, a 3. Let's see if we can turn that into a 4 by day's end.", "A 3. 'Our greatest glory is not in never falling, but in rising every time we fall.'", "Thanks for the 3. You're facing the day, and that's commendable.", "A 3. Remember that progress isn't always linear. It's okay.", "A 3 is a signal. Let's be mindful and supportive today.", "Okay, a 3. Let's find a small victory to build on.", "I see the 3. Keep your head up. We believe in you."], 4: ["A 4. You're on the board. 'The secret of getting ahead is getting started.' - Mark Twain.", "Okay, a 4. 'Believe you can and you're halfway there.'", "A 4 is a foundation. Let's build on it today.", "Got it, a 4. It's not a 10, but it's not a 1 either. It's progress.", "A 4. Let's focus on what we can control and make it a good day.", "Thanks for the 4. We're in this together, let's move that number up.", "A 4 is a good starting point. 'The journey of a thousand miles begins with a single step.'", "Okay, a 4. Let's stay curious and see what the day brings.", "I see that 4. Let's aim for a little better, one hour at a time.", "A 4. It's an honest number. Let's work with it."], 5: ["A 5. Perfectly balanced. 'I am not a product of my circumstances. I am a product of my decisions.'", "Okay, a 5. Right in the middle. A solid place to be.", "A 5. 'Do the best you can until you know better. Then when you know better, do better.'", "Got it, a 5. It's a 'just keep swimming' kind of day. We can do that.", "A 5. Not bad, not great, just right for a day of steady work.", "Thanks for the 5. It's an important signal. Let's keep things steady.", "A 5. Let's see what we can do to nudge that in the right direction.", "Okay, a 5. A day of potential. Let's make the most of it.", "A 5. You're holding steady. That's a skill in itself.", "I see the 5. You're showing up and you're ready. That's a win."], 6: ["A 6. We're leaning positive! 'Perseverance is not a long race; it is many short races.'", "Okay, a 6. A good, solid number. Let's build on that energy.", "A 6. That's a sign of good things to come. Let's make it happen.", "Got it, a 6. More than halfway to a 10! Let's ride that wave.", "A 6 is a good place to be. 'Continuous improvement is better than delayed perfection.'", "Thanks for the 6. It's good to see that positive momentum.", "A 6. Let's channel that into some great work today.", "Okay, a 6. Let's keep that good energy flowing.", "A 6. You're on the right track. Keep it up!", "I see the 6. That's a solid score. Let's have a productive day."], 7: ["A 7 is a strong score! 'Act as if what you do makes a difference. It does.' - William James", "A solid 7. You've got good energy today. Let's use it well.", "A 7. That's a great sign for a productive and positive day.", "Got it, a 7. You're clearly in a good headspace. Let's get to it.", "A 7. 'The secret of getting ahead is getting started.' You're already ahead!", "Thanks for the 7. That positive energy is contagious.", "A 7 is great. Let's see if we can make it an 8 or 9.", "Okay, a 7. You're ready to tackle the day. Love to see it.", "A 7. You're bringing the good stuff today. Thank you.", "I see the 7. That's fantastic. Let's have a great session."], 8: ["An 8! Love to see it. 'Energy and persistence conquer all things.' - B. Franklin.", "A great 8! You're clearly feeling it today. Let's make big things happen.", "An 8. That's awesome. Let's channel that into some creative work.", "Got it, an 8. You're in the zone. Let's stay there.", "An 8 is fantastic. 'Passion is energy. Feel the power that comes from what excites you.'", "Thanks for the 8. Your positive attitude lifts the whole team.", "An 8. That's how we do it. Let's crush it today.", "Okay, an 8. You're ready to go. Let's make today count.", "An 8! That's what I'm talking about. Let's get after it.", "I see the 8. You're bringing your A-game. Let's go!"], 9: ["A 9! Almost perfect. 'The best way to predict the future is to create it.' - Peter Drucker.", "A 9. You are on fire today! Let's do something amazing.", "A 9. That's incredible. Let's use that momentum to help others.", "Got it, a 9. You're clearly at the top of your game. Inspiring!", "A 9 is phenomenal. 'You are the designer of your destiny.' And today looks like a masterpiece.", "Thanks for the 9. That's a huge boost for everyone.", "A 9. Let's bottle up that feeling. It's a great day to learn.", "Okay, a 9. You're seeing things clearly and feeling great. A perfect combo.", "A 9! Let's take on the biggest challenge we can find today.", "I see the 9. That's outstanding. Let's make some magic happen."], 10: ["A perfect 10! 'Stay hungry, stay foolish.' - Steve Jobs. Let's do something great.", "A 10! You're a firework today. Let's light up the sky.", "A 10. That's what we love to see. You're an inspiration.", "Got it, a 10. You're unstoppable. What's our biggest goal today?", "A 10 is as good as it gets. 'The only way to do great work is to love what you do.'", "Thanks for the 10. That's the gold standard. Let's lead by example.", "A 10! You've got it all today. Let's share that energy.", "Okay, a 10. You're 100% ready. Let's do this.", "A 10! That's incredible. You're going to have a fantastic day.", "I see the 10. Perfect score. Let's make today perfect too."]},
@@ -101,9 +120,8 @@ USER_TEMPLATE = """
         
         function updateRoster(checkins) {
             rosterList.innerHTML = '';
-            if (checkins.length === 0) {
-                emptyRoster.style.display = 'block';
-            } else {
+            if (checkins.length === 0) { emptyRoster.style.display = 'block'; }
+            else {
                 emptyRoster.style.display = 'none';
                 checkins.forEach(entry => {
                     const playerDiv = document.createElement('div');
@@ -113,7 +131,7 @@ USER_TEMPLATE = """
                 });
             }
         }
-
+        
         document.addEventListener('DOMContentLoaded', () => {
             fetch('/api/today').then(res => res.json()).then(data => updateRoster(data));
         });
@@ -136,9 +154,10 @@ USER_TEMPLATE = """
             }).then(res => res.json()).then(data => {
                 if(data.success) {
                     displayFeedback(morale, understanding);
-                    // Optimistically update roster
                     fetch('/api/today').then(res => res.json()).then(data => updateRoster(data));
                     clearInputs();
+                } else {
+                    errorMessage.textContent = data.error || "An unknown error occurred.";
                 }
             });
         });
@@ -146,23 +165,16 @@ USER_TEMPLATE = """
         function displayFeedback(morale_score, understanding_score) {
             const feedbackMessage = document.getElementById('feedbackMessage');
             feedbackMessage.classList.remove('bg-green-900/50', 'text-green-300', 'bg-yellow-900/50', 'text-yellow-300', 'bg-rose-950/60', 'text-rose-300');
-            
             const moraleMessage = getRandomResponse('morale', morale_score);
             const understandingMessage = getRandomResponse('understanding', understanding_score);
             const message = `${moraleMessage} As for the lessons: ${understandingMessage}`;
-
             let bgClass = '', textClass = '';
             if (morale_score >= 8) { [bgClass, textClass] = ['bg-green-900/50', 'text-green-300']; } 
             else if (morale_score < 4) { [bgClass, textClass] = ['bg-rose-950/60', 'text-rose-300']; }
             else { [bgClass, textClass] = ['bg-yellow-900/50', 'text-yellow-300']; }
-            
             feedbackMessage.textContent = message;
             feedbackMessage.classList.add(bgClass, textClass);
-
-            setTimeout(() => {
-                feedbackMessage.textContent = '';
-                feedbackMessage.classList.remove(bgClass, textClass);
-            }, 12000);
+            setTimeout(() => { feedbackMessage.textContent = ''; feedbackMessage.classList.remove(bgClass, textClass); }, 12000);
         }
 
         function clearInputs() {
@@ -176,148 +188,227 @@ USER_TEMPLATE = """
 </html>
 """
 
-# Template for the admin/instructor dashboard page
 ADMIN_TEMPLATE = """
-<!DOCTYPE html>
-<html lang="en">
+<!DOCTYPE html><html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Admin Dashboard</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Admin Dashboard</title><script src="https://cdn.tailwindcss.com"></script><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">{{ style|safe }}
     <style>
-        body { font-family: 'Inter', sans-serif; background-color: #111827; color: #d1d5db; }
+        .tab { cursor: pointer; padding: 1rem; border-bottom: 4px solid transparent; }
+        .tab.active { border-color: #1abc9c; color: #1abc9c; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
         .stat-card { background-color: #1f2937; border-radius: 12px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1); }
         .day-header { background-color: #374151; }
-        .roster-item { border-left: 4px solid #1abc9c; background-color: #4b5563; }
         details > summary { cursor: pointer; }
     </style>
 </head>
-<body class="p-4 md:p-8">
-    <div class="max-w-4xl mx-auto">
-        <header class="mb-8 text-center">
-            <h1 class="text-4xl font-bold text-white">Instructor Dashboard</h1>
-            <p class="text-lg text-gray-400 mt-2">Historical Check-in Analysis</p>
-        </header>
-
-        <!-- Loop through each day's data -->
-        {% for date, data in daily_data.items()|sort(reverse=True) %}
-        <section class="mb-8">
-            <div class="day-header p-4 rounded-t-lg">
-                <h2 class="text-2xl font-bold text-white">{{ data.friendly_date }}</h2>
+<body class="p-4 md:p-8 bg-gray-900 text-gray-300">
+    <div class="max-w-7xl mx-auto">
+        <header class="mb-8 flex justify-between items-start">
+            <div class="text-left">
+                <h1 class="text-4xl font-bold text-white">Instructor Dashboard</h1>
+                <p class="text-lg text-gray-400 mt-2">Historical Check-in Analysis</p>
             </div>
-            <div class="stat-card p-6 rounded-b-lg grid grid-cols-1 sm:grid-cols-3 gap-6">
-                <!-- Daily Averages -->
-                <div class="text-center">
-                    <h3 class="text-lg font-semibold text-gray-400">Total Check-ins</h3>
-                    <p class="text-4xl font-bold text-white">{{ data.checkins|length }}</p>
-                </div>
-                <div class="text-center">
-                    <h3 class="text-lg font-semibold text-gray-400">Avg. Morale</h3>
-                    <p class="text-4xl font-bold text-teal-400">{{ '%.2f'|format(data.avg_morale) }}</p>
-                </div>
-                <div class="text-center">
-                    <h3 class="text-lg font-semibold text-gray-400">Avg. Understanding</h3>
-                    <p class="text-4xl font-bold text-teal-400">{{ '%.2f'|format(data.avg_understanding) }}</p>
-                </div>
-            </div>
-            <!-- Collapsible details for individual check-ins -->
-            <details class="stat-card mt-2">
-                <summary class="p-4 text-lg font-semibold text-white">View Individual Check-ins</summary>
-                <div class="p-6 border-t border-gray-600 space-y-3">
-                    {% for checkin in data.checkins %}
-                    <div class="roster-item p-3 rounded-lg flex justify-between">
-                        <p class="font-bold text-lg text-gray-100">{{ checkin.name }}</p>
-                        <p class="text-sm text-gray-200">Morale: <span class="font-semibold text-white">{{ checkin.morale }}/10</span> | Understanding: <span class="font-semibold text-white">{{ checkin.understanding }}/10</span></p>
+            <div class="flex items-center gap-4">
+                 <!-- Session Control -->
+                <div class="text-right">
+                    <p class="text-white font-semibold">Session Status: 
+                        {% if is_open %} <span class="text-green-400">OPEN</span>
+                        {% else %} <span class="text-red-400">CLOSED</span>
+                        {% endif %}
+                    </p>
+                    <div class="flex gap-2 mt-2">
+                        <form action="/start" method="post"><button type="submit" class="modern-btn font-bold py-2 px-4 rounded-lg text-sm">Start Check-in</button></form>
+                        <form action="/end" method="post"><button type="submit" class="danger-btn font-bold py-2 px-4 rounded-lg text-sm">End Check-in</button></form>
                     </div>
-                    {% endfor %}
                 </div>
-            </details>
-        </section>
-        {% else %}
-        <div class="stat-card p-8 text-center">
-            <h2 class="text-2xl font-bold text-white">No Check-ins Yet</h2>
-            <p class="text-gray-400 mt-2">Once users start checking in on the main page, the data will appear here.</p>
+                <a href="/logout" class="bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-lg">Logout</a>
+            </div>
+        </header>
+        <!-- Tabs -->
+        <div class="flex border-b border-gray-700 mb-8">
+            <div class="tab active" onclick="openTab(event, 'summary')">Daily Summary</div>
+            <div class="tab" onclick="openTab(event, 'calendar')">Calendar Log</div>
+            <div class="tab" onclick="openTab(event, 'students')">Student Analysis</div>
         </div>
-        {% endfor %}
+        <!-- Tab Content -->
+        <div id="summary" class="tab-content active">
+            {% for date, data in daily_data.items()|sort(reverse=True) %}
+            <section class="mb-8 stat-card">
+                <div class="day-header p-4 rounded-t-lg"><h2 class="text-2xl font-bold text-white">{{ data.friendly_date }}</h2></div>
+                <div class="p-6 grid grid-cols-1 sm:grid-cols-3 gap-6 text-center">
+                    <div><h3 class="text-lg font-semibold text-gray-400">Total Check-ins</h3><p class="text-4xl font-bold text-white">{{ data.checkins|length }}</p></div>
+                    <div><h3 class="text-lg font-semibold text-gray-400">Avg. Morale</h3><p class="text-4xl font-bold text-teal-400">{{ '%.2f'|format(data.avg_morale) }}</p></div>
+                    <div><h3 class="text-lg font-semibold text-gray-400">Avg. Understanding</h3><p class="text-4xl font-bold text-teal-400">{{ '%.2f'|format(data.avg_understanding) }}</p></div>
+                </div>
+            </section>
+            {% else %}<div class="stat-card p-8 text-center"><h2 class="text-2xl font-bold text-white">No Check-ins Yet</h2></div>{% endfor %}
+        </div>
+        <div id="calendar" class="tab-content">
+             <div class="stat-card p-6"><h2 class="text-2xl font-bold text-white mb-4">Calendar Log</h2><div class="space-y-4">
+                    {% for date, data in daily_data.items()|sort(reverse=True) %}
+                        <details class="bg-gray-800 rounded-lg"><summary class="p-4 text-lg font-semibold text-white">{{ data.friendly_date }} ({{ data.checkins|length }} check-ins) - Morale: {{ '%.2f'|format(data.avg_morale) }}, Understanding: {{ '%.2f'|format(data.avg_understanding) }}</summary>
+                            <div class="p-6 border-t border-gray-600 space-y-3">
+                                {% for checkin in data.checkins %}<div class="roster-item p-3 rounded-lg flex justify-between"><p class="font-bold text-lg text-gray-100">{{ checkin.name }} <span class="text-xs text-gray-400 ml-2">{{ checkin.time }}</span></p><p class="text-sm text-gray-200">M: <span class="font-semibold text-white">{{ checkin.morale }}/10</span> | U: <span class="font-semibold text-white">{{ checkin.understanding }}/10</span></p></div>{% endfor %}
+                            </div></details>
+                    {% endfor %}
+                </div></div>
+        </div>
+        <div id="students" class="tab-content">
+            <div class="stat-card p-6"><div class="flex justify-between items-center mb-6"><h2 class="text-2xl font-bold text-white">Per-Student History</h2><a href="/export" class="modern-btn font-bold py-2 px-4 rounded-lg text-lg">Export to Excel</a></div>
+                <div class="space-y-4">
+                     {% for name, data in student_data.items()|sort %}
+                        <details class="bg-gray-800 rounded-lg"><summary class="p-4 text-lg font-semibold text-white">{{ name }} ({{ data.checkins|length }} check-ins)</summary>
+                             <div class="p-6 border-t border-gray-600 space-y-3">
+                                {% for checkin in data.checkins %}<div class="roster-item p-3 rounded-lg flex justify-between"><p class="font-bold text-lg text-gray-100">{{ checkin.date_friendly }} <span class="text-xs text-gray-400 ml-2">{{ checkin.time }}</span></p><p class="text-sm text-gray-200">Morale: <span class="font-semibold text-white">{{ checkin.morale }}/10</span> | Understanding: <span class="font-semibold text-white">{{ checkin.understanding }}/10</span></p></div>{% endfor %}
+                            </div></details>
+                    {% endfor %}
+                </div></div>
+        </div>
     </div>
-</body>
-</html>
+    <script>
+        function openTab(evt, tabName) {
+            let i, tabcontent, tablinks;
+            tabcontent = document.getElementsByClassName("tab-content");
+            for (i = 0; i < tabcontent.length; i++) { tabcontent[i].style.display = "none"; }
+            tablinks = document.getElementsByClassName("tab");
+            for (i = 0; i < tablinks.length; i++) { tablinks[i].className = tablinks[i].className.replace(" active", ""); }
+            document.getElementById(tabName).style.display = "block";
+            evt.currentTarget.className += " active";
+        }
+    </script>
+</body></html>
 """
 
-# --- Flask Routes ---
+# --- Flask Routes and Logic ---
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    error = None
+    if request.method == 'POST':
+        if request.form['password'] == ADMIN_PASSWORD:
+            session['logged_in'] = True
+            return redirect(url_for('admin_view'))
+        else:
+            error = 'Invalid password. Please try again.'
+    return render_template_string(LOGIN_TEMPLATE, style=BASE_STYLE, error=error)
+
+@app.route('/logout')
+def logout():
+    session.pop('logged_in', None)
+    return redirect(url_for('user_view'))
 
 @app.route('/')
 def user_view():
-    """Serves the main check-in page for users."""
-    return render_template_string(USER_TEMPLATE)
+    """Serves the main check-in page for users, respecting the session status."""
+    status = load_data(STATUS_FILE, {'is_open': False})
+    return render_template_string(USER_TEMPLATE, style=BASE_STYLE, is_open=status.get('is_open', False))
 
 @app.route('/admin')
 def admin_view():
-    """Serves the admin dashboard with historical data analysis."""
-    all_checkins = load_checkins()
+    """Serves the admin dashboard, protected by session login."""
+    if not session.get('logged_in'):
+        return redirect(url_for('login'))
+
+    all_checkins = load_data(DATA_FILE, [])
+    status = load_data(STATUS_FILE, {'is_open': False})
     
-    # Group check-ins by date
     daily_data = defaultdict(lambda: {'checkins': [], 'total_morale': 0, 'total_understanding': 0})
     for checkin in all_checkins:
-        # Assuming date is in ISO format 'YYYY-MM-DDTHH:MM:SS.ms'
-        date_obj = datetime.fromisoformat(checkin['date'])
-        date_key = date_obj.strftime('%Y-%m-%d')
+        dt_obj = datetime.fromisoformat(checkin['timestamp'])
+        date_key = dt_obj.strftime('%Y-%m-%d')
+        checkin['time'] = dt_obj.strftime('%I:%M:%S %p')
         daily_data[date_key]['checkins'].append(checkin)
         daily_data[date_key]['total_morale'] += checkin['morale']
         daily_data[date_key]['total_understanding'] += checkin['understanding']
         
-    # Calculate averages and add friendly date format
-    processed_data = {}
-    for date_key, data in daily_data.items():
+    processed_daily_data = {}
+    for date_key, data in sorted(daily_data.items(), reverse=True):
         count = len(data['checkins'])
-        processed_data[date_key] = {
+        processed_daily_data[date_key] = {
             'checkins': data['checkins'],
             'avg_morale': data['total_morale'] / count if count > 0 else 0,
             'avg_understanding': data['total_understanding'] / count if count > 0 else 0,
             'friendly_date': datetime.strptime(date_key, '%Y-%m-%d').strftime('%A, %B %d, %Y')
         }
         
-    return render_template_string(ADMIN_TEMPLATE, daily_data=processed_data)
+    student_data = defaultdict(lambda: {'checkins': []})
+    for checkin in sorted(all_checkins, key=lambda x: x['timestamp'], reverse=True):
+        dt_obj = datetime.fromisoformat(checkin['timestamp'])
+        checkin['date_friendly'] = dt_obj.strftime('%Y-%m-%d')
+        checkin['time'] = dt_obj.strftime('%I:%M:%S %p')
+        student_data[checkin['name']]['checkins'].append(checkin)
+        
+    return render_template_string(ADMIN_TEMPLATE, style=BASE_STYLE, daily_data=processed_daily_data, student_data=student_data, is_open=status.get('is_open', False))
+
+@app.route('/start', methods=['POST'])
+def start_session():
+    if not session.get('logged_in'): return redirect(url_for('login'))
+    save_data(STATUS_FILE, {'is_open': True})
+    return redirect(url_for('admin_view'))
+
+@app.route('/end', methods=['POST'])
+def end_session():
+    if not session.get('logged_in'): return redirect(url_for('login'))
+    save_data(STATUS_FILE, {'is_open': False})
+    return redirect(url_for('admin_view'))
+
+@app.route('/export')
+def export_data():
+    """Exports all check-in data to an Excel file."""
+    if not session.get('logged_in'): return redirect(url_for('login'))
+    all_checkins = load_data(DATA_FILE, [])
+    if not all_checkins: return "No data to export.", 404
+
+    df = pd.DataFrame(all_checkins)
+    df['timestamp'] = pd.to_datetime(df['timestamp'])
+    df['Date'] = df['timestamp'].dt.strftime('%Y-%m-%d')
+    df['Time'] = df['timestamp'].dt.strftime('%I:%M:%S %p')
+    df_export = df[['name', 'Date', 'Time', 'morale', 'understanding']]
+    df_export.columns = ['Name', 'Date', 'Time', 'Morale', 'Understanding'] # Clean up column headers
+    
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df_export.to_excel(writer, index=False, sheet_name='Checkins')
+    output.seek(0)
+    
+    return send_file(output, as_attachment=True, download_name='cohort_checkin_export.xlsx', mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 # --- API Endpoints ---
-
 @app.route('/api/checkin', methods=['POST'])
 def handle_checkin():
     """Receives new check-in data, adds a timestamp, and saves it."""
+    status = load_data(STATUS_FILE, {'is_open': False})
+    if not status.get('is_open'):
+        return jsonify({'success': False, 'error': 'Check-in is currently closed.'}), 403
+
     data = request.json
     if not data or 'name' not in data or 'morale' not in data or 'understanding' not in data:
         return jsonify({'success': False, 'error': 'Invalid data'}), 400
         
-    all_checkins = load_checkins()
-    
+    all_checkins = load_data(DATA_FILE, [])
     new_entry = {
-        'name': data['name'],
+        'name': data['name'].strip(),
         'morale': data['morale'],
         'understanding': data['understanding'],
-        'date': datetime.now().isoformat() # Add a timestamp
+        'timestamp': datetime.now().isoformat()
     }
-    
     all_checkins.append(new_entry)
-    save_checkins(all_checkins)
-    
+    save_data(DATA_FILE, all_checkins)
     return jsonify({'success': True})
 
 @app.route('/api/today')
 def get_todays_checkins():
     """Returns a list of check-ins for the current day."""
-    all_checkins = load_checkins()
+    all_checkins = load_data(DATA_FILE, [])
     today_str = datetime.now().strftime('%Y-%m-%d')
-    
-    todays_entries = [
-        checkin for checkin in all_checkins 
-        if checkin['date'].startswith(today_str)
-    ]
-    
+    todays_entries = [c for c in all_checkins if c['timestamp'].startswith(today_str)]
     return jsonify(todays_entries)
 
 
 if __name__ == '__main__':
+    # Initialize status file if it doesn't exist
+    if not os.path.exists(STATUS_FILE):
+        save_data(STATUS_FILE, {'is_open': False})
     app.run(debug=True)
 
