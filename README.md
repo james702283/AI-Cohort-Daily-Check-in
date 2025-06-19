@@ -1,23 +1,28 @@
-# AI Cohort Daily Check-in
+AI Cohort Daily Check-in & Analysis Tool
 
-This is an interactive web application designed for members of a group, such as an AI cohort, a development team, or a classroom, to perform a daily check-in. It allows users to report their current morale and their understanding of recent material on a scale of 1 to 10. The system provides unique, personalized, and encouraging feedback and displays the results on a live roster.
+This is an interactive web application for daily check-ins within a group, such as an AI cohort or a classroom. It features two distinct views: a user-facing page for submitting check-ins and a private admin dashboard for historical analysis.
+
+User View (/): Allows users to report their morale and understanding of recent material on a scale of 1 to 10. The system provides unique, personalized feedback and displays a live roster for the current day.
+
+Admin Dashboard (/admin): Provides instructors with a historical log of all check-ins, grouped by date. It automatically calculates and displays the daily average for both morale and understanding, serving as a powerful tool for tracking trends and improving lessons.
 
 (Note: This is a placeholder image link. You would replace this with a screenshot of your actual application.)
 
 ## Key Features
 
-* Dual-Metric Input: Collects two key data points from each user: emotional well-being (morale) and learning progress (understanding).
+* Separate User and Admin Views: Provides a simple check-in interface for users and a powerful data analysis dashboard for instructors at a separate /admin URL.
+* Persistent Data Storage: Check-ins are saved to a local checkins.json file, creating a permanent historical record.
+* Daily Analytics: The admin dashboard automatically calculates and displays the average morale and understanding scores for each day.
 * Highly Personalized Feedback: Utilizes an extensive library of 200 unique responses to generate tailored feedback based on the user's specific scores.
-* Modern, Professional UI: Features a sleek, dark, and translucent "frosted glass" design over a high-quality background image.
-* Live Roster: Displays a real-time list of all users who have checked in, fostering a sense of community and shared experience.
-* User-Friendly Interface: Includes clear instructions, intuitive input fields, and helpful error handling for a smooth user experience.
-* Encouraging Tone: All user-facing text is crafted in a positive, supportive, and motivational tone to foster a safe and encouraging environment.
+* Modern, Professional UI: Features a sleek, dark, and translucent "frosted glass" design.
+* Live Roster (User-Facing): The main page shows a list of check-ins for the current day only.
 
 ## Technology Stack
 
 * Backend: Python with Flask framework
 * Frontend: HTML, JavaScript
 * Styling: Tailwind CSS (loaded via CDN)
+* Data Storage: JSON file
 
 ## How to Run This Project
 
@@ -28,7 +33,7 @@ To run this application on your local machine, follow these steps:
    * Save this README.md file into the same folder.
 
 2. Open a Terminal or Command Prompt:
-   * Navigate into the folder you just created. For example: `cd Desktop/my-checkin-app`
+   * Navigate into the folder you just created (e.g., cd Desktop/my-checkin-app).
 
 3. Create a virtual environment (recommended):
    ```bash
@@ -46,7 +51,10 @@ To run this application on your local machine, follow these steps:
    python app.py
    ```
 
-6. Open your browser:
-   * Navigate to http://127.0.0.1:5000 to see and use the application.
+6. A file named checkins.json will be created automatically in the folder to store the data.
+
+7. Open your browser:
+   * User View: Navigate to http://127.0.0.1:5000/
+   * Admin View: Navigate to http://127.0.0.1:5000/admin
 
 Last updated: June 19, 2025 
