@@ -1,6 +1,6 @@
-﻿# app.py
-# A comprehensive check-in and analysis tool with instructor-controlled sessions,
-# a login system, persistent JSON storage, and data export functionality.
+# app.py
+# A comprehensive check-in and analysis tool with an interactive calendar view,
+# instructor-controlled sessions, a login system, persistent JSON storage, and data export.
 
 # To run this:
 # 1. Make sure you have Python installed.
@@ -12,8 +12,9 @@
 
 import json
 import os
+import calendar
 from flask import Flask, render_template_string, jsonify, request, session, redirect, url_for, send_file
-from datetime import datetime
+from datetime import datetime, timedelta
 from collections import defaultdict
 import pandas as pd
 from io import BytesIO
@@ -21,35 +22,24 @@ from io import BytesIO
 # Initialize the Flask application
 app = Flask(__name__)
 # IMPORTANT: A secret key is required for session management (the login feature).
-# In a real production app, this should be a long, random, and secret string.
-app.secret_key = 'a-super-secret-key-for-development-only'
+app.secret_key = 'a-super-secret-key-for-development-only-please-change'
 DATA_FILE = 'checkins.json'
 STATUS_FILE = 'status.json'
-# The password for the admin login is case-sensitive.
 ADMIN_PASSWORD = 'Instructor'
 
 # --- Data Persistence Functions ---
 def load_data(file_path, default_data):
-    """A generic function to load data from a JSON file."""
-    if not os.path.exists(file_path):
-        return default_data
+    if not os.path.exists(file_path): return default_data
     try:
         with open(file_path, 'r') as f:
-            # Handle empty file case
-            if os.path.getsize(file_path) == 0:
-                return default_data
+            if os.path.getsize(file_path) == 0: return default_data
             return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return default_data
+    except (FileNotFoundError, json.JSONDecodeError): return default_data
 
 def save_data(file_path, data):
-    """A generic function to save data to a JSON file."""
-    with open(file_path, 'w') as f:
-        json.dump(data, f, indent=4)
+    with open(file_path, 'w') as f: json.dump(data, f, indent=4)
 
 # --- HTML Templates ---
-# Templates are defined as multi-line strings for a single-file application.
-# Includes CSS for a modern look and feel across all pages.
 BASE_STYLE = """
     <style>
         body { font-family: 'Inter', sans-serif; background-image: url('https://images.pexels.com/photos/1181359/pexels-photo-1181359.jpeg?auto=compress&cs=tinysrgb&w=1260&h=750&dpr=2'); background-size: cover; background-position: center; background-attachment: fixed; }
@@ -87,11 +77,7 @@ USER_TEMPLATE = """
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>AI Cohort Check-in</title><script src="https://cdn.tailwindcss.com"></script><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">{{ style|safe }}</head>
 <body class="flex items-center justify-center min-h-screen p-4">
     <div class="w-full max-w-2xl mx-auto"><div class="card">
-        <div class="modern-header text-center p-6">
-            <h1 class="text-3xl md:text-4xl font-bold">AI Cohort Daily Check-in</h1>
-            <p class="text-lg mt-2 opacity-90">Let's see where everyone's at. Be curious, not judgmental.</p>
-        </div>
-        
+        <div class="modern-header text-center p-6"><h1 class="text-3xl md:text-4xl font-bold">AI Cohort Daily Check-in</h1><p class="text-lg mt-2 opacity-90">Let's see where everyone's at. Be curious, not judgmental.</p></div>
         {% if is_open %}
         <div id="checkInForm" class="p-6 md:p-8 space-y-6 dark-theme-text">
             <div><label for="name" class="block text-lg font-semibold mb-2">Who we got here? Tell me your name:</label><input type="text" id="name" class="dark-input w-full px-4 py-3 rounded-lg transition" placeholder="e.g., Alex Johnson"></div>
@@ -101,19 +87,8 @@ USER_TEMPLATE = """
             <div id="feedbackMessage" class="feedback-message text-center font-semibold p-4 rounded-lg h-24 flex items-center justify-center text-sm"></div>
             <div class="flex flex-col sm:flex-row gap-4 pt-2"><button id="checkInBtn" class="modern-btn w-full font-bold py-3 px-6 rounded-lg text-lg">Check-In</button></div>
         </div>
-        {% else %}
-        <div class="p-8 text-center dark-theme-text">
-            <h2 class="text-2xl font-bold">Check-in is Currently Closed</h2>
-            <p class="mt-4 text-gray-300">Please wait for the instructor to start the session.</p>
-        </div>
-        {% endif %}
-
-        <div class="dark-theme-text bg-black/20 p-6 md:p-8">
-            <h2 class="text-2xl font-bold border-b-2 border-gray-500/50 pb-2 mb-4">Today's Check-in Roster</h2>
-            <div id="rosterList" class="space-y-3">
-                <p id="emptyRoster" class="text-gray-400">The classroom is quiet... for now.</p>
-            </div>
-        </div>
+        {% else %}<div class="p-8 text-center dark-theme-text"><h2 class="text-2xl font-bold">Check-in is Currently Closed</h2><p class="mt-4 text-gray-300">Please wait for the instructor to start the session.</p></div>{% endif %}
+        <div class="dark-theme-text bg-black/20 p-6 md:p-8"><h2 class="text-2xl font-bold border-b-2 border-gray-500/50 pb-2 mb-4">Today's Check-in Roster</h2><div id="rosterList" class="space-y-3"><p id="emptyRoster" class="text-gray-400">The classroom is quiet... for now.</p></div></div>
     </div></div>
     <script>
         const responses = {
@@ -206,24 +181,28 @@ ADMIN_TEMPLATE = """
         .tab-content.active { display: block; }
         .stat-card { background-color: #1f2937; border-radius: 12px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1); }
         .day-header { background-color: #374151; }
-        details > summary { cursor: pointer; list-style: none; } /* Hide default arrow */
-        details > summary::-webkit-details-marker { display: none; } /* Hide default arrow for Chrome/Safari */
+        details > summary { cursor: pointer; list-style: none; }
+        details > summary::-webkit-details-marker { display: none; }
+        /* Calendar Styles */
+        .calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 1px; background-color: #4b5563; }
+        .calendar-header { text-align: center; font-weight: bold; padding: 0.5rem; background-color: #374151; }
+        .calendar-day { background-color: #1f2937; min-height: 120px; padding: 0.5rem; transition: background-color 0.2s; }
+        .calendar-day.not-in-month { background-color: #111827; opacity: 0.5; }
+        .calendar-day a { display: block; height: 100%; text-decoration: none; color: inherit; }
+        .calendar-day a:hover { background-color: rgba(26, 188, 156, 0.1); }
+        .day-number { font-weight: bold; }
+        .day-stats { font-size: 0.75rem; color: #9ca3af; }
+        .day-stats .morale { color: #facc15; }
+        .day-stats .understanding { color: #34d399; }
     </style>
 </head>
 <body class="p-4 md:p-8 bg-gray-900 text-gray-300">
     <div class="max-w-7xl mx-auto">
         <header class="mb-8 flex justify-between items-start">
-            <div class="text-left">
-                <h1 class="text-4xl font-bold text-white">Instructor Dashboard</h1>
-                <p class="text-lg text-gray-400 mt-2">Historical Check-in Analysis</p>
-            </div>
+            <div class="text-left"><h1 class="text-4xl font-bold text-white">Instructor Dashboard</h1><p class="text-lg text-gray-400 mt-2">Historical Check-in Analysis</p></div>
             <div class="flex items-center gap-4">
                 <div class="text-right">
-                    <p class="text-white font-semibold">Session Status: 
-                        {% if is_open %} <span class="text-green-400">OPEN</span>
-                        {% else %} <span class="text-red-400">CLOSED</span>
-                        {% endif %}
-                    </p>
+                    <p class="text-white font-semibold">Session Status: {% if is_open %} <span class="text-green-400">OPEN</span>{% else %} <span class="text-red-400">CLOSED</span>{% endif %}</p>
                     <div class="flex gap-2 mt-2">
                         <form action="/start" method="post"><button type="submit" class="modern-btn font-bold py-2 px-4 rounded-lg text-sm">Start Check-in</button></form>
                         <form action="/end" method="post"><button type="submit" class="danger-btn font-bold py-2 px-4 rounded-lg text-sm">End Check-in</button></form>
@@ -233,31 +212,64 @@ ADMIN_TEMPLATE = """
             </div>
         </header>
         <div class="flex border-b border-gray-700 mb-8">
-            <div class="tab active" onclick="openTab(event, 'summary')">Daily Summary</div>
+            <div class="tab active" onclick="openTab(event, 'summary')">Today's Summary</div>
             <div class="tab" onclick="openTab(event, 'calendar')">Calendar Log</div>
             <div class="tab" onclick="openTab(event, 'students')">Student Analysis</div>
         </div>
         <div id="summary" class="tab-content active">
-            {% for date, data in daily_data.items() %}
+            {% if todays_summary_data %}
             <section class="mb-8 stat-card">
-                <div class="day-header p-4 rounded-t-lg"><h2 class="text-2xl font-bold text-white">{{ data.friendly_date }}</h2></div>
-                <div class="p-6 grid grid-cols-1 sm:grid-cols-3 gap-6 text-center">
-                    <div><h3 class="text-lg font-semibold text-gray-400">Total Check-ins</h3><p class="text-4xl font-bold text-white">{{ data.checkins|length }}</p></div>
-                    <div><h3 class="text-lg font-semibold text-gray-400">Avg. Morale</h3><p class="text-4xl font-bold text-teal-400">{{ '%.2f'|format(data.avg_morale) }}</p></div>
-                    <div><h3 class="text-lg font-semibold text-gray-400">Avg. Understanding</h3><p class="text-4xl font-bold text-teal-400">{{ '%.2f'|format(data.avg_understanding) }}</p></div>
+                <div class="day-header p-4 rounded-t-lg"><h2 class="text-2xl font-bold text-white">Summary for {{ todays_summary_data.friendly_date }}</h2></div>
+                <div class="p-6">
+                    <h3 class="text-xl font-semibold text-white mb-4">Daily Roster</h3>
+                    <div class="space-y-3 mb-6">
+                        {% for checkin in todays_summary_data.checkins %}
+                        <div class="roster-item p-3 rounded-lg flex justify-between items-center">
+                            <p class="font-bold text-lg text-gray-100">{{ checkin.name }} <span class="text-xs text-gray-400 ml-2">{{ checkin.time }}</span></p>
+                            <p class="text-sm text-gray-200">Morale: <span class="font-semibold text-white">{{ checkin.morale }}/10</span> | Understanding: <span class="font-semibold text-white">{{ checkin.understanding }}/10</span></p>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    <div class="pt-6 border-t border-gray-700 grid grid-cols-1 sm:grid-cols-3 gap-6 text-center">
+                        <div><h3 class="text-lg font-semibold text-gray-400">Total Check-ins</h3><p class="text-4xl font-bold text-white">{{ todays_summary_data.checkins|length }}</p></div>
+                        <div><h3 class="text-lg font-semibold text-gray-400">Avg. Morale</h3><p class="text-4xl font-bold text-teal-400">{{ '%.2f'|format(todays_summary_data.avg_morale) }}</p></div>
+                        <div><h3 class="text-lg font-semibold text-gray-400">Avg. Understanding</h3><p class="text-4xl font-bold text-teal-400">{{ '%.2f'|format(todays_summary_data.avg_understanding) }}</p></div>
+                    </div>
                 </div>
             </section>
-            {% else %}<div class="stat-card p-8 text-center"><h2 class="text-2xl font-bold text-white">No Check-ins Yet</h2></div>{% endfor %}
+            {% else %}<div class="stat-card p-8 text-center"><h2 class="text-2xl font-bold text-white">No Check-ins for Today Yet</h2></div>{% endif %}
         </div>
         <div id="calendar" class="tab-content">
-             <div class="stat-card p-6"><h2 class="text-2xl font-bold text-white mb-4">Calendar Log</h2><div class="space-y-4">
-                    {% for date, data in daily_data.items() %}
-                        <details class="bg-gray-800 rounded-lg"><summary class="p-4 text-lg font-semibold text-white flex justify-between items-center"><span>{{ data.friendly_date }} ({{ data.checkins|length }} check-ins) - Morale: {{ '%.2f'|format(data.avg_morale) }}, U: {{ '%.2f'|format(data.avg_understanding) }}</span><span>&#9662;</span></summary>
-                            <div class="p-6 border-t border-gray-600 space-y-3">
-                                {% for checkin in data.checkins %}<div class="roster-item p-3 rounded-lg flex justify-between"><p class="font-bold text-lg text-gray-100">{{ checkin.name }} <span class="text-xs text-gray-400 ml-2">{{ checkin.time }}</span></p><p class="text-sm text-gray-200">M: <span class="font-semibold text-white">{{ checkin.morale }}/10</span> | U: <span class="font-semibold text-white">{{ checkin.understanding }}/10</span></p></div>{% endfor %}
-                            </div></details>
+             <div class="stat-card p-6">
+                <div class="flex justify-between items-center mb-4">
+                    <a href="{{ prev_month_url }}" class="modern-btn font-bold py-2 px-4 rounded-lg">&larr; Previous Month</a>
+                    <h2 class="text-3xl font-bold text-white">{{ current_month_str }}</h2>
+                    <a href="{{ next_month_url }}" class="modern-btn font-bold py-2 px-4 rounded-lg">Next Month &rarr;</a>
+                </div>
+                <div class="calendar-grid border border-gray-700 rounded-lg overflow-hidden">
+                    {% for day_name in calendar_headers %}<div class="calendar-header">{{ day_name }}</div>{% endfor %}
+                    {% for week in calendar_weeks %}
+                        {% for day in week %}
+                            <div class="calendar-day {{ 'not-in-month' if day.day == 0 else '' }}">
+                                {% if day.day != 0 %}
+                                    {% if day.data %}
+                                        <a href="/day/{{ day.date_str }}">
+                                            <div class="day-number text-white">{{ day.day }}</div>
+                                            <div class="day-stats mt-2">
+                                                <p><strong>{{ day.data.count }}</strong> check-ins</p>
+                                                <p><span class="morale">M: {{ '%.1f'|format(day.data.avg_morale) }}</span></p>
+                                                <p><span class="understanding">U: {{ '%.1f'|format(day.data.avg_understanding) }}</span></p>
+                                            </div>
+                                        </a>
+                                    {% else %}
+                                        <div class="day-number text-gray-500">{{ day.day }}</div>
+                                    {% endif %}
+                                {% endif %}
+                            </div>
+                        {% endfor %}
                     {% endfor %}
-                </div></div>
+                </div>
+            </div>
         </div>
         <div id="students" class="tab-content">
             <div class="stat-card p-6"><div class="flex justify-between items-center mb-6"><h2 class="text-2xl font-bold text-white">Per-Student History</h2><a href="/export" class="modern-btn font-bold py-2 px-4 rounded-lg text-lg">Export to Excel</a></div>
@@ -282,6 +294,40 @@ ADMIN_TEMPLATE = """
             evt.currentTarget.className += " active";
         }
     </script>
+</body></html>
+"""
+
+DAY_DETAIL_TEMPLATE = """
+<!DOCTYPE html><html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Check-ins for {{ date_str }}</title><script src="https://cdn.tailwindcss.com"></script><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">{{ style|safe }}</head>
+<body class="p-4 md:p-8 bg-gray-900 text-gray-300">
+    <div class="max-w-4xl mx-auto">
+        <header class="mb-8 text-left">
+            <a href="{{ url_for('admin_view', year=date_obj.year, month=date_obj.month) }}" class="modern-btn inline-block mb-4">&larr; Back to Calendar</a>
+            <h1 class="text-4xl font-bold text-white">Check-in Details</h1>
+            <p class="text-lg text-gray-400 mt-2">For {{ date_obj.strftime('%A, %B %d, %Y') }}</p>
+        </header>
+        <section class="mb-8 stat-card">
+            <div class="p-6 grid grid-cols-1 sm:grid-cols-3 gap-6 text-center">
+                <div><h3 class="text-lg font-semibold text-gray-400">Total Check-ins</h3><p class="text-4xl font-bold text-white">{{ checkins|length }}</p></div>
+                <div><h3 class="text-lg font-semibold text-gray-400">Avg. Morale</h3><p class="text-4xl font-bold text-teal-400">{{ '%.2f'|format(avg_morale) }}</p></div>
+                <div><h3 class="text-lg font-semibold text-gray-400">Avg. Understanding</h3><p class="text-4xl font-bold text-teal-400">{{ '%.2f'|format(avg_understanding) }}</p></div>
+            </div>
+        </section>
+        <section class="stat-card p-6">
+            <h2 class="text-2xl font-bold text-white mb-4">Individual Check-ins</h2>
+            <div class="space-y-3">
+                {% for checkin in checkins %}
+                <div class="roster-item p-3 rounded-lg flex justify-between">
+                    <p class="font-bold text-lg text-gray-100">{{ checkin.name }} <span class="text-xs text-gray-400 ml-2">{{ checkin.time }}</span></p>
+                    <p class="text-sm text-gray-200">Morale: <span class="font-semibold text-white">{{ checkin.morale }}/10</span> | Understanding: <span class="font-semibold text-white">{{ checkin.understanding }}/10</span></p>
+                </div>
+                {% else %}
+                <p class="text-gray-400">No check-ins were recorded on this day.</p>
+                {% endfor %}
+            </div>
+        </section>
+    </div>
 </body></html>
 """
 
@@ -310,26 +356,63 @@ def user_view():
     return render_template_string(USER_TEMPLATE, style=BASE_STYLE, is_open=status.get('is_open', False))
 
 @app.route('/admin')
-def admin_view():
+@app.route('/admin/<int:year>/<int:month>')
+def admin_view(year=None, month=None):
     """Serves the admin dashboard, protected by session login."""
     if not session.get('logged_in'):
         return redirect(url_for('login'))
 
+    now = datetime.now()
+    if year is None: year = now.year
+    if month is None: month = now.month
+
+    current_date = datetime(year, month, 1)
+    prev_month_date = current_date - timedelta(days=1)
+    prev_month_url = url_for('admin_view', year=prev_month_date.year, month=prev_month_date.month)
+    
+    next_month_year = year + 1 if month == 12 else year
+    next_month_month = 1 if month == 12 else month + 1
+    next_month_url = url_for('admin_view', year=next_month_year, month=next_month_month)
+    
     all_checkins = load_data(DATA_FILE, [])
     status = load_data(STATUS_FILE, {'is_open': False})
+    valid_checkins = [c for c in all_checkins if 'timestamp' in c]
+
+    # --- Process data for all tabs ---
+    daily_data, student_data, calendar_data, todays_summary_data = process_checkin_data(valid_checkins, year, month)
     
-    # --- Process data for Daily Summary and Calendar Log ---
-    daily_data = defaultdict(lambda: {'checkins': [], 'total_morale': 0, 'total_understanding': 0})
-    for checkin in all_checkins:
+    return render_template_string(
+        ADMIN_TEMPLATE, 
+        style=BASE_STYLE, 
+        todays_summary_data=todays_summary_data,
+        daily_data=daily_data, 
+        student_data=student_data, 
+        is_open=status.get('is_open', False),
+        calendar_weeks=calendar_data,
+        calendar_headers=[d for d in calendar.day_abbr],
+        current_month_str=current_date.strftime('%B %Y'),
+        prev_month_url=prev_month_url,
+        next_month_url=next_month_url
+    )
+
+def process_checkin_data(checkins, cal_year, cal_month):
+    daily_summary = defaultdict(lambda: {'checkins': [], 'total_morale': 0, 'total_understanding': 0})
+    student_summary = defaultdict(lambda: {'checkins': []})
+    
+    for checkin in checkins:
         dt_obj = datetime.fromisoformat(checkin['timestamp'])
         date_key = dt_obj.strftime('%Y-%m-%d')
-        checkin['time'] = dt_obj.strftime('%I:%M:%S %p')
-        daily_data[date_key]['checkins'].append(checkin)
-        daily_data[date_key]['total_morale'] += checkin['morale']
-        daily_data[date_key]['total_understanding'] += checkin['understanding']
         
+        checkin['time'] = dt_obj.strftime('%I:%M:%S %p')
+        daily_summary[date_key]['checkins'].append(checkin)
+        daily_summary[date_key]['total_morale'] += checkin['morale']
+        daily_summary[date_key]['total_understanding'] += checkin['understanding']
+        
+        checkin['date_friendly'] = dt_obj.strftime('%Y-%m-%d')
+        student_summary[checkin['name']]['checkins'].append(checkin)
+
     processed_daily_data = {}
-    for date_key, data in sorted(daily_data.items(), reverse=True):
+    for date_key, data in sorted(daily_summary.items(), reverse=True):
         count = len(data['checkins'])
         processed_daily_data[date_key] = {
             'checkins': data['checkins'],
@@ -337,19 +420,56 @@ def admin_view():
             'avg_understanding': data['total_understanding'] / count if count > 0 else 0,
             'friendly_date': datetime.strptime(date_key, '%Y-%m-%d').strftime('%A, %B %d, %Y')
         }
-        
-    # --- Process data for Student Analysis ---
-    student_data = defaultdict(lambda: {'checkins': []})
-    for checkin in sorted(all_checkins, key=lambda x: x['timestamp'], reverse=True):
-        dt_obj = datetime.fromisoformat(checkin['timestamp'])
-        checkin['date_friendly'] = dt_obj.strftime('%Y-%m-%d')
-        checkin['time'] = dt_obj.strftime('%I:%M:%S %p')
-        student_data[checkin['name']]['checkins'].append(checkin)
-        
-    # Sort students alphabetically by name
-    sorted_student_data = dict(sorted(student_data.items()))
 
-    return render_template_string(ADMIN_TEMPLATE, style=BASE_STYLE, daily_data=processed_daily_data, student_data=sorted_student_data, is_open=status.get('is_open', False))
+    # Prepare data for Today's Summary tab
+    today_key = datetime.now().strftime('%Y-%m-%d')
+    todays_summary_data = processed_daily_data.get(today_key)
+
+    month_checkins = {k: v for k, v in processed_daily_data.items() if k.startswith(f"{cal_year:04d}-{cal_month:02d}")}
+    cal = calendar.monthcalendar(cal_year, cal_month)
+    calendar_data = []
+    for week in cal:
+        week_data = []
+        for day in week:
+            day_data = {'day': day, 'data': None}
+            if day != 0:
+                date_str = f"{cal_year:04d}-{cal_month:02d}-{day:02d}"
+                day_data['date_str'] = date_str
+                if date_str in month_checkins:
+                    day_data['data'] = { 'count': len(month_checkins[date_str]['checkins']), 'avg_morale': month_checkins[date_str]['avg_morale'], 'avg_understanding': month_checkins[date_str]['avg_understanding'] }
+            week_data.append(day_data)
+        calendar_data.append(week_data)
+
+    sorted_student_data = dict(sorted(student_summary.items()))
+    return processed_daily_data, sorted_student_data, calendar_data, todays_summary_data
+
+@app.route('/day/<string:date_str>')
+def day_detail_view(date_str):
+    if not session.get('logged_in'): return redirect(url_for('login'))
+    
+    try: date_obj = datetime.strptime(date_str, '%Y-%m-%d')
+    except ValueError: return "Invalid date format. Please use YYYY-MM-DD.", 404
+
+    all_checkins = load_data(DATA_FILE, [])
+    day_checkins = [c for c in all_checkins if 'timestamp' in c and c['timestamp'].startswith(date_str)]
+    
+    total_morale = sum(c['morale'] for c in day_checkins)
+    total_understanding = sum(c['understanding'] for c in day_checkins)
+    count = len(day_checkins)
+    avg_morale = total_morale / count if count > 0 else 0
+    avg_understanding = total_understanding / count if count > 0 else 0
+
+    for checkin in day_checkins: checkin['time'] = datetime.fromisoformat(checkin['timestamp']).strftime('%I:%M:%S %p')
+
+    return render_template_string(
+        DAY_DETAIL_TEMPLATE, 
+        style=BASE_STYLE, 
+        checkins=day_checkins, 
+        date_str=date_str, 
+        date_obj=date_obj,
+        avg_morale=avg_morale,
+        avg_understanding=avg_understanding
+    )
 
 @app.route('/start', methods=['POST'])
 def start_session():
@@ -365,12 +485,12 @@ def end_session():
 
 @app.route('/export')
 def export_data():
-    """Exports all check-in data to an Excel file."""
     if not session.get('logged_in'): return redirect(url_for('login'))
     all_checkins = load_data(DATA_FILE, [])
-    if not all_checkins: return "No data to export.", 404
+    valid_checkins = [c for c in all_checkins if 'timestamp' in c]
+    if not valid_checkins: return "No valid data to export.", 404
 
-    df = pd.DataFrame(all_checkins)
+    df = pd.DataFrame(valid_checkins)
     df['timestamp'] = pd.to_datetime(df['timestamp'])
     df['Date'] = df['timestamp'].dt.strftime('%Y-%m-%d')
     df['Time'] = df['timestamp'].dt.strftime('%I:%M:%S %p')
@@ -387,37 +507,26 @@ def export_data():
 # --- API Endpoints ---
 @app.route('/api/checkin', methods=['POST'])
 def handle_checkin():
-    """Receives new check-in data, adds a timestamp, and saves it."""
     status = load_data(STATUS_FILE, {'is_open': False})
-    if not status.get('is_open'):
-        return jsonify({'success': False, 'error': 'Check-in is currently closed.'}), 403
+    if not status.get('is_open'): return jsonify({'success': False, 'error': 'Check-in is currently closed.'}), 403
 
     data = request.json
-    if not data or 'name' not in data or 'morale' not in data or 'understanding' not in data:
-        return jsonify({'success': False, 'error': 'Invalid data'}), 400
+    if not data or 'name' not in data or 'morale' not in data or 'understanding' not in data: return jsonify({'success': False, 'error': 'Invalid data'}), 400
         
     all_checkins = load_data(DATA_FILE, [])
-    new_entry = {
-        'name': data['name'].strip().title(), # Capitalize name for consistency
-        'morale': data['morale'],
-        'understanding': data['understanding'],
-        'timestamp': datetime.now().isoformat()
-    }
+    new_entry = { 'name': data['name'].strip().title(), 'morale': data['morale'], 'understanding': data['understanding'], 'timestamp': datetime.now().isoformat() }
     all_checkins.append(new_entry)
     save_data(DATA_FILE, all_checkins)
     return jsonify({'success': True})
 
 @app.route('/api/today')
 def get_todays_checkins():
-    """Returns a list of check-ins for the current day."""
     all_checkins = load_data(DATA_FILE, [])
     today_str = datetime.now().strftime('%Y-%m-%d')
-    todays_entries = [c for c in all_checkins if c['timestamp'].startswith(today_str)]
+    todays_entries = [c for c in all_checkins if 'timestamp' in c and c['timestamp'].startswith(today_str)]
     return jsonify(todays_entries)
 
 
 if __name__ == '__main__':
-    # Initialize status file if it doesn't exist on first run
-    if not os.path.exists(STATUS_FILE):
-        save_data(STATUS_FILE, {'is_open': False})
+    if not os.path.exists(STATUS_FILE): save_data(STATUS_FILE, {'is_open': False})
     app.run(debug=True)
