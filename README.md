@@ -47,4 +47,6 @@ To run this application on your local machine, follow these steps:
    ```
 
 6. Open your browser:
-   * Navigate to http://127.0.0.1:5000 to see and use the application. 
+   * Navigate to http://127.0.0.1:5000 to see and use the application.
+
+Last updated: June 19, 2025 
